@@ -1,19 +1,28 @@
 package net.glowstone.entity;
 
 import com.flowpowered.networking.Message;
+import net.glowstone.EventFactory;
 import net.glowstone.GlowChunk;
 import net.glowstone.GlowServer;
 import net.glowstone.GlowWorld;
 import net.glowstone.entity.meta.MetadataIndex;
 import net.glowstone.entity.meta.MetadataMap;
+import net.glowstone.entity.physics.BoundingBox;
+import net.glowstone.entity.physics.EntityBoundingBox;
 import net.glowstone.net.message.play.entity.*;
 import net.glowstone.util.Position;
 import org.apache.commons.lang.Validate;
 import org.bukkit.EntityEffect;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Entity;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityPortalEnterEvent;
+import org.bukkit.event.entity.EntityPortalEvent;
+import org.bukkit.event.entity.EntityPortalExitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.metadata.MetadataStore;
 import org.bukkit.metadata.MetadataStoreBase;
@@ -34,7 +43,7 @@ public abstract class GlowEntity implements Entity {
     /**
      * The metadata store class for entities.
      */
-    private final static class EntityMetadataStore extends MetadataStoreBase<Entity> implements MetadataStore<Entity> {
+    private static final class EntityMetadataStore extends MetadataStoreBase<Entity> implements MetadataStore<Entity> {
         @Override
         protected String disambiguate(Entity subject, String metadataKey) {
             return subject.getUniqueId() + ":" + metadataKey;
@@ -44,7 +53,7 @@ public abstract class GlowEntity implements Entity {
     /**
      * The metadata store for entities.
      */
-    private final static MetadataStore<Entity> bukkitMetadata = new EntityMetadataStore();
+    private static final MetadataStore<Entity> bukkitMetadata = new EntityMetadataStore();
 
     /**
      * The server this entity belongs to.
@@ -92,6 +101,11 @@ public abstract class GlowEntity implements Entity {
     protected final Vector velocity = new Vector();
 
     /**
+     * The entity's bounding box, or null if it has no physical presence.
+     */
+    private EntityBoundingBox boundingBox;
+
+    /**
      * Whether the entity should have its position resent as if teleported.
      */
     protected boolean teleported = false;
@@ -134,7 +148,8 @@ public abstract class GlowEntity implements Entity {
         this.location = location.clone();
         this.world = (GlowWorld) location.getWorld();
         this.server = world.getServer();
-        world.getEntityManager().allocate(this);
+        server.getEntityIdManager().allocate(this);
+        world.getEntityManager().register(this);
         previousLocation = location.clone();
     }
 
@@ -216,6 +231,15 @@ public abstract class GlowEntity implements Entity {
         }
     }
 
+    /**
+     * Gets the full direction (including SOUTH_SOUTH_EAST etc) this entity is facing.
+     * @return The intercardinal BlockFace of this entity
+     */
+    public BlockFace getFacing() {
+        long facing = Math.round(getLocation().getYaw() / 22.5) + 8;
+        return Position.getDirection((byte) (facing % 16));
+    }
+
     @Override
     public void setVelocity(Vector velocity) {
         this.velocity.copy(velocity);
@@ -229,10 +253,13 @@ public abstract class GlowEntity implements Entity {
 
     @Override
     public boolean teleport(Location location) {
+        Validate.notNull(location, "location cannot be null");
+        Validate.notNull(location.getWorld(), "location's world cannot be null");
+
         if (location.getWorld() != world) {
-            world.getEntityManager().deallocate(this);
+            world.getEntityManager().unregister(this);
             world = (GlowWorld) location.getWorld();
-            world.getEntityManager().allocate(this);
+            world.getEntityManager().register(this);
         }
         setRawLocation(location);
         teleported = true;
@@ -264,7 +291,7 @@ public abstract class GlowEntity implements Entity {
      * not.
      */
     public boolean isWithinDistance(GlowEntity other) {
-        return isWithinDistance(other.location);
+        return !other.isDead() && (isWithinDistance(other.location) || other instanceof GlowLightningStrike);
     }
 
     /**
@@ -303,6 +330,30 @@ public abstract class GlowEntity implements Entity {
         if (ticksLived % (30 * 20) == 0) {
             teleported = true;
         }
+
+        pulsePhysics();
+
+        if (hasMoved()) {
+            Block currentBlock = location.getBlock();
+            if (currentBlock.getType() == Material.ENDER_PORTAL) {
+                EventFactory.callEvent(new EntityPortalEnterEvent(this, currentBlock.getLocation()));
+                if (server.getAllowEnd()) {
+                    Location previousLocation = location.clone();
+                    boolean success;
+                    if (getWorld().getEnvironment() == World.Environment.THE_END) {
+                        success = teleportToSpawn();
+                    } else {
+                        success = teleportToEnd();
+                    }
+                    if (success) {
+                        EntityPortalExitEvent e = EventFactory.callEvent(new EntityPortalExitEvent(this, previousLocation, location.clone(), velocity.clone(), new Vector()));
+                        if (!e.getAfter().equals(velocity)) {
+                            setVelocity(e.getAfter());
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -313,14 +364,6 @@ public abstract class GlowEntity implements Entity {
         metadata.resetChanges();
         teleported = false;
         velocityChanged = false;
-    }
-
-    /**
-     * Gets the entity's previous position.
-     * @return The previous position of this entity.
-     */
-    public Location getPreviousLocation() {
-        return previousLocation;
     }
 
     /**
@@ -427,6 +470,107 @@ public abstract class GlowEntity implements Entity {
         return Position.hasRotated(location, previousLocation);
     }
 
+    /**
+     * Teleport this entity to the spawn point of the main world.
+     * This is used to teleport out of the End.
+     * @return {@code true} if the teleport was successful.
+     */
+    protected boolean teleportToSpawn() {
+        Location target = server.getWorlds().get(0).getSpawnLocation();
+
+        EntityPortalEvent event = EventFactory.callEvent(new EntityPortalEvent(this, location.clone(), target, null));
+        if (event.isCancelled()) {
+            return false;
+        }
+        target = event.getTo();
+
+        teleport(target);
+        return true;
+    }
+
+    /**
+     * Teleport this entity to the End.
+     * If no End world is loaded this does nothing.
+     * @return {@code true} if the teleport was successful.
+     */
+    protected boolean teleportToEnd() {
+        if (!server.getAllowEnd()) {
+            return false;
+        }
+        Location target = null;
+        for (World world : server.getWorlds()) {
+            if (world.getEnvironment() == World.Environment.THE_END) {
+                target = world.getSpawnLocation();
+                break;
+            }
+        }
+        if (target == null) {
+            return false;
+        }
+
+        EntityPortalEvent event = EventFactory.callEvent(new EntityPortalEvent(this, location.clone(), target, null));
+        if (event.isCancelled()) {
+            return false;
+        }
+        target = event.getTo();
+
+        teleport(target);
+        return true;
+    }
+
+    /**
+     * Determine if this entity is intersecting a block of the specified type.
+     * If the entity has a defined bounding box, that is used to check for
+     * intersection. Otherwise,
+     * @param material The material to check for.
+     * @return True if the entity is intersecting
+     */
+    public boolean isTouchingMaterial(Material material) {
+        if (boundingBox == null) {
+            // less accurate calculation if no bounding box is present
+            for (BlockFace face : new BlockFace[]{BlockFace.EAST, BlockFace.WEST, BlockFace.SOUTH, BlockFace.NORTH, BlockFace.DOWN, BlockFace.SELF,
+                    BlockFace.NORTH_EAST, BlockFace.NORTH_WEST, BlockFace.SOUTH_EAST, BlockFace.SOUTH_WEST}) {
+                if (getLocation().getBlock().getRelative(face).getType() == material) {
+                    return true;
+                }
+            }
+        } else {
+            // bounding box-based calculation
+            Vector min = boundingBox.minCorner, max = boundingBox.maxCorner;
+            for (int x = min.getBlockX(); x <= max.getBlockX(); ++x) {
+                for (int y = min.getBlockY(); y <= max.getBlockY(); ++y) {
+                    for (int z = min.getBlockZ(); z <= max.getBlockZ(); ++z) {
+                        if (world.getBlockTypeIdAt(x, y, z) == material.getId()) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+    // Physics stuff
+
+    protected final void setBoundingBox(double xz, double y) {
+        boundingBox = new EntityBoundingBox(xz, y);
+    }
+
+    public boolean intersects(BoundingBox box) {
+        return boundingBox != null && boundingBox.intersects(box);
+    }
+
+    protected void pulsePhysics() {
+        // todo: update location based on velocity,
+        // do gravity, all that other good stuff
+
+        // make sure bounding box is up to date
+        if (boundingBox != null) {
+            boundingBox.setCenter(location.getX(), location.getY(), location.getZ());
+        }
+    }
+
     ////////////////////////////////////////////////////////////////////////////
     // Various properties
 
@@ -490,17 +634,37 @@ public abstract class GlowEntity implements Entity {
     @Override
     public void remove() {
         active = false;
-        world.getEntityManager().deallocate(this);
+        world.getEntityManager().unregister(this);
+        server.getEntityIdManager().deallocate(this);
     }
 
     @Override
     public List<Entity> getNearbyEntities(double x, double y, double z) {
-        throw new UnsupportedOperationException("Not supported yet.");
+        // This behavior is similar to CraftBukkit, where a call with args
+        // (0, 0, 0) finds any entities whose bounding boxes intersect that of
+        // this entity.
+
+        BoundingBox searchBox;
+        if (boundingBox == null) {
+            searchBox = BoundingBox.fromPositionAndSize(location.toVector(), new Vector(0, 0, 0));
+        } else {
+            searchBox = BoundingBox.copyOf(boundingBox);
+        }
+        Vector vec = new Vector(x, y, z);
+        searchBox.minCorner.subtract(vec);
+        searchBox.maxCorner.add(vec);
+
+        return world.getEntityManager().getEntitiesInside(searchBox, this);
     }
 
     @Override
     public void playEffect(EntityEffect type) {
-
+        EntityStatusMessage message = new EntityStatusMessage(id, type);
+        for (GlowPlayer player : world.getRawPlayers()) {
+            if (player.canSeeEntity(this)) {
+                player.getSession().send(message);
+            }
+        }
     }
 
     ////////////////////////////////////////////////////////////////////////////

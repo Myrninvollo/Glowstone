@@ -17,7 +17,8 @@ import java.util.Random;
 public class SurfaceGenerator extends GlowChunkGenerator {
 
     public SurfaceGenerator() {
-        super(  // In-ground
+        super(
+                // In-ground
                 new LakePopulator(),
                 // On-ground
                 // Desert is before tree and mushroom but snow is after so trees have snow on top
@@ -26,10 +27,12 @@ public class SurfaceGenerator extends GlowChunkGenerator {
                 new MushroomPopulator(),
                 new SnowPopulator(),
                 new FlowerPopulator(),
+                new BiomePopulator(),
                 // Below-ground
                 new DungeonPopulator(),
                 //new CavePopulator(),
-                new OrePopulator());
+                new OrePopulator()
+        );
     }
 
     @Override
@@ -133,5 +136,5 @@ public class SurfaceGenerator extends GlowChunkGenerator {
     public Location getFixedSpawnLocation(World world, Random random) {
         return new Location(world, 0, 2 + world.getHighestBlockYAt(0, 0), 0);
     }
-    
+
 }

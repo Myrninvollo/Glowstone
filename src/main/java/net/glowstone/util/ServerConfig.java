@@ -64,6 +64,30 @@ public final class ServerConfig {
     }
 
     ////////////////////////////////////////////////////////////////////////////
+    // Modification
+
+    /**
+     * Save the configuration back to file.
+     */
+    public void save() {
+        try {
+            config.save(configFile);
+        } catch (IOException e) {
+            GlowServer.logger.log(Level.SEVERE, "Failed to write config: " + configFile, e);
+        }
+    }
+
+    /**
+     * Change a configuration value at runtime.
+     * @see ServerConfig#save()
+     * @param key the config key to write the value to
+     * @param value value to write to config key
+     */
+    public void set(Key key, Object value) {
+        config.set(key.path, value);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
     // Value getters
 
     public String getString(Key key) {
@@ -220,7 +244,8 @@ public final class ServerConfig {
                 bukkit.load(bukkitYml);
             } catch (InvalidConfigurationException e) {
                 report(bukkitYml, e);
-            } catch (IOException ignored) {
+            } catch (IOException e) {
+                GlowServer.logger.log(Level.WARNING, "Could not migrate from " + bukkitYml, e);
             }
 
             for (Key key : Key.values()) {
@@ -239,12 +264,25 @@ public final class ServerConfig {
             Properties props = new Properties();
             try {
                 props.load(new FileInputStream(serverProps));
-            } catch (IOException ignored) {
+            } catch (IOException e) {
+                GlowServer.logger.log(Level.WARNING, "Could not migrate from " + serverProps, e);
             }
 
             for (Key key : Key.values()) {
                 if (key.migrate == Migrate.PROPS && props.containsKey(key.migratePath)) {
-                    config.set(key.path, props.get(key.migratePath));
+                    String value = props.getProperty(key.migratePath);
+                    if (key.def instanceof Integer) {
+                        try {
+                            config.set(key.path, Integer.parseInt(value));
+                        } catch (NumberFormatException e) {
+                            GlowServer.logger.log(Level.WARNING, "Could not migrate " + key.migratePath + " from " + serverProps, e);
+                            continue;
+                        }
+                    } else if (key.def instanceof Boolean) {
+                        config.set(key.path, Boolean.parseBoolean(value));
+                    } else {
+                        config.set(key.path, value);
+                    }
                     migrateStatus = true;
                 }
             }
@@ -288,6 +326,7 @@ public final class ServerConfig {
         PLUGIN_PROFILING("advanced.plugin-profiling", false, Migrate.BUKKIT, "settings.plugin-profiling"),
         WARNING_STATE("advanced.deprecated-verbose", "false", Migrate.BUKKIT, "settings.deprecated-verbose"),
         COMPRESSION_THRESHOLD("advanced.compression-threshold", 256, Migrate.PROPS, "network-compression-threshold"),
+        PROXY_SUPPORT("advanced.proxy-support", false),
 
         // query rcon etc
         QUERY_ENABLED("extras.query-enabled", false, Migrate.PROPS, "enable-query"),
@@ -296,6 +335,7 @@ public final class ServerConfig {
         RCON_ENABLED("extras.rcon-enabled", false, Migrate.PROPS, "enable-rcon"),
         RCON_PASSWORD("extras.rcon-password", "glowstone", Migrate.PROPS, "rcon.password"),
         RCON_PORT("extras.rcon-port", 25575, Migrate.PROPS, "rcon.port"),
+        RCON_COLORS("extras.rcon-colors", true),
 
         // level props
         LEVEL_NAME("world.name", "world", Migrate.PROPS, "level-name"),
@@ -307,11 +347,12 @@ public final class ServerConfig {
         GENERATOR_SETTINGS("world.gen-settings", "", Migrate.PROPS, "generator-settings"),
         ALLOW_NETHER("world.allow-nether", true, Migrate.PROPS, "allow-nether"),
         ALLOW_END("world.allow-end", true, Migrate.BUKKIT, "settings.allow-end"),
+        PERSIST_SPAWN("world.keep-spawn-loaded", true),
 
         // game props
         GAMEMODE("game.gamemode", "SURVIVAL", Migrate.PROPS, "gamemode"),
         FORCE_GAMEMODE("game.gamemode-force", "false", Migrate.PROPS, "force-gamemode"),
-        DIFFICULTY("game.difficulty", "EASY", Migrate.PROPS, "difficulty"),
+        DIFFICULTY("game.difficulty", "NORMAL", Migrate.PROPS, "difficulty"),
         HARDCORE("game.hardcore", false, Migrate.PROPS, "hardcore"),
         PVP_ENABLED("game.pvp", true, Migrate.PROPS, "pvp"),
         MAX_BUILD_HEIGHT("game.max-build-height", 256, Migrate.PROPS, "max-build-height"),
@@ -322,6 +363,7 @@ public final class ServerConfig {
         ENABLE_COMMAND_BLOCK("game.command-blocks", false, Migrate.PROPS, "enable-command-block"),
         //OP_PERMISSION_LEVEL(null, Migrate.PROPS, "op-permission-level"),
         RESOURCE_PACK("game.resource-pack", "", Migrate.PROPS, "resource-pack"),
+        RESOURCE_PACK_HASH("game.resource-pack-hash", "", Migrate.PROPS, "resource-pack-hash"),
         SNOOPER_ENABLED("server.snooper-enabled", false, Migrate.PROPS, "snooper-enabled"),
 
         // critters

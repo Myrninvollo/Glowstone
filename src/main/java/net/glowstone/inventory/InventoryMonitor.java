@@ -1,5 +1,6 @@
 package net.glowstone.inventory;
 
+import net.glowstone.constants.ItemIds;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
@@ -12,6 +13,8 @@ import java.util.Objects;
  * Tracker for when items in an inventory are changed.
  */
 public final class InventoryMonitor {
+
+    private static int nextId = 1;
 
     private final InventoryView view;
     private final ItemStack[] slots;
@@ -32,8 +35,8 @@ public final class InventoryMonitor {
         if (isDefault) {
             id = 0;
         } else {
-            // todo: counting or something
-            id = 1;
+            id = nextId;
+            nextId = (nextId % 100) + 1;
         }
         type = getTypeId(view.getType());
 
@@ -48,8 +51,10 @@ public final class InventoryMonitor {
      * @param slot The slot to update.
      */
     private void updateItem(int slot) {
+        // sanitize() used as a last line of defense to prevent client crashes
+        // GlowInventory should generally be able to keep its contents safe
         ItemStack source = view.getItem(slot);
-        slots[slot] = source == null ? null : source.clone();
+        slots[slot] = source == null ? null : ItemIds.sanitize(source.clone());
     }
 
     /**
@@ -123,8 +128,6 @@ public final class InventoryMonitor {
                 return "minecraft:crafting_table";
             case FURNACE:
                 return "minecraft:furnace";
-            case DROPPER:
-                return "minecraft:dropper";
             case DISPENSER:
                 return "minecraft:dispenser";
             case ENCHANTING:
@@ -139,9 +142,8 @@ public final class InventoryMonitor {
                 return "minecraft:anvil";
             case HOPPER:
                 return "minecraft:hopper";
-            case CRAFTING:
-            case CREATIVE:
-                // todo: check whether CRAFTING or CREATIVE are even legal
+            case DROPPER:
+                return "minecraft:dropper";
             case PLAYER:
             case CHEST:
             case ENDER_CHEST:

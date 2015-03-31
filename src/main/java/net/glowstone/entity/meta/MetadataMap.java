@@ -1,6 +1,9 @@
 package net.glowstone.entity.meta;
 
 import com.google.common.collect.ImmutableList;
+import lombok.EqualsAndHashCode;
+import lombok.RequiredArgsConstructor;
+import lombok.ToString;
 import org.bukkit.entity.Entity;
 import org.bukkit.inventory.ItemStack;
 
@@ -9,6 +12,7 @@ import java.util.*;
 /**
  * A map for entity metadata.
  */
+@ToString(of = {"entityClass", "map"})
 public class MetadataMap {
 
     private final Map<MetadataIndex, Object> map = new EnumMap<>(MetadataIndex.class);
@@ -86,31 +90,31 @@ public class MetadataMap {
     }
 
     public byte getByte(MetadataIndex index) {
-        return _get(index, MetadataType.BYTE, (byte) 0);
+        return get(index, MetadataType.BYTE, (byte) 0);
     }
 
     public short getShort(MetadataIndex index) {
-        return _get(index, MetadataType.SHORT, (short) 0);
+        return get(index, MetadataType.SHORT, (short) 0);
     }
 
     public int getInt(MetadataIndex index) {
-        return _get(index, MetadataType.INT, 0);
+        return get(index, MetadataType.INT, 0);
     }
 
     public float getFloat(MetadataIndex index) {
-        return _get(index, MetadataType.FLOAT, 0f);
+        return get(index, MetadataType.FLOAT, 0f);
     }
 
     public String getString(MetadataIndex index) {
-        return _get(index, MetadataType.STRING, null);
+        return get(index, MetadataType.STRING, null);
     }
 
     public ItemStack getItem(MetadataIndex index) {
-        return _get(index, MetadataType.ITEM, null);
+        return get(index, MetadataType.ITEM, null);
     }
 
     @SuppressWarnings("unchecked")
-    private <T> T _get(MetadataIndex index, MetadataType expected, T def) {
+    private <T> T get(MetadataIndex index, MetadataType expected, T def) {
         if (index.getType() != expected) {
             throw new IllegalArgumentException("Cannot get " + index + ": is " + index.getType() + ", not " + expected);
         }
@@ -139,22 +143,11 @@ public class MetadataMap {
         changes.clear();
     }
 
-    @Override
-    public String toString() {
-        return "MetadataMap{" +
-                "map=" + map +
-                ", entityClass=" + entityClass +
-                '}';
-    }
-
-    public static class Entry implements Comparable<Entry> {
+    @RequiredArgsConstructor
+    @EqualsAndHashCode
+    public static final class Entry implements Comparable<Entry> {
         public final MetadataIndex index;
         public final Object value;
-
-        public Entry(MetadataIndex index, Object value) {
-            this.index = index;
-            this.value = value;
-        }
 
         @Override
         public int compareTo(Entry o) {
